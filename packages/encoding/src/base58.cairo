@@ -32,14 +32,14 @@ pub fn encode_u8_array(mut bytes: Array<u8>, base58_chars: Span<u8>) -> Array<u8
     while i < bytes.len() && *bytes[i] == 0 {
         zeros += 1;
         i += 1;
-    };
+    }
 
     // Add leading '1's for each leading zero byte
     i = 0;
     while i < zeros {
         result.append(*base58_chars[0]);
         i += 1;
-    };
+    }
 
     // Convert the bytes to base58 using "big integer division"
     // This algorithm processes bytes sequentially to avoid overflow
@@ -57,24 +57,24 @@ pub fn encode_u8_array(mut bytes: Array<u8>, base58_chars: Span<u8>) -> Array<u8
             new_b58.append((total % 58).try_into().unwrap());
             carry = total / 58;
             j += 1;
-        };
+        }
 
         // Handle any remaining carry
         while carry > 0 {
             new_b58.append((carry % 58).try_into().unwrap());
             carry = carry / 58;
-        };
+        }
 
         b58 = new_b58;
         i += 1;
-    };
+    }
 
     // Build the result string from the b58 buffer (reversed)
     i = b58.len();
     while i > 0 {
         i -= 1;
         result.append(*base58_chars[(*b58[i]).into()]);
-    };
+    }
 
     result
 }
@@ -95,8 +95,8 @@ pub fn encode_felt(self: felt252, base58_chars: Span<u8>) -> Array<u8> {
         let remainder: usize = remainder.try_into().unwrap();
         result.append(*base58_chars[remainder]);
         num = quotient;
-    };
-    
+    }
+
     result = result.reversed();
     result
 }
@@ -113,7 +113,7 @@ pub impl Base58Decoder of Decoder<Array<u8>> {
         while i < data.len() && *data[i] == *get_base58_char_set()[0] {
             zeros += 1;
             i += 1;
-        };
+        }
 
         // Convert from base58
         let mut num = 0_u256;
@@ -130,8 +130,8 @@ pub impl Base58Decoder of Decoder<Array<u8>> {
             }
             num += value.into() * power;
             power *= 58;
-        };
-        
+        }
+
         // If we encountered an invalid character, return empty array
         if i > zeros {
             return array![];
@@ -145,7 +145,7 @@ pub impl Base58Decoder of Decoder<Array<u8>> {
             while i < zeros {
                 result.append(0);
                 i += 1;
-            };
+            }
             return result;
         }
 
@@ -155,14 +155,14 @@ pub impl Base58Decoder of Decoder<Array<u8>> {
             let remainder: u8 = remainder.try_into().unwrap();
             result.append(remainder);
             num = quotient;
-        };
+        }
 
         // Add leading zeros
         i = 0;
         while i < zeros {
             result.append(0);
             i += 1;
-        };
+        }
 
         result = result.reversed();
         result
@@ -180,7 +180,7 @@ fn get_base58_value(x: u8) -> u8 {
             break;
         }
         i += 1;
-    };
+    }
     result
 }
 

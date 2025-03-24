@@ -51,6 +51,8 @@ pub fn encode_u8_array(mut bytes: Array<u8>, base64_chars: Span<u8>) -> Array<u8
     if bytes.len() == 0 {
         return result;
     }
+
+    // Handle padding calculation upfront
     let mut p: u8 = 0;
     let c = bytes.len() % 3;
     if c == 1 {
@@ -65,16 +67,25 @@ pub fn encode_u8_array(mut bytes: Array<u8>, base64_chars: Span<u8>) -> Array<u8
     let mut i = 0;
     let bytes_len = bytes.len();
     let last_iteration = bytes_len - 3;
-    while (i != bytes_len) {
-        let n: u32 = (*bytes[i]).into()
-            * 65536 | (*bytes[i + 1]).into()
-            * 256 | (*bytes[i + 2]).into();
+
+    while i < bytes_len {
+        // Calculate the 24-bit group (3 bytes at a time)
+        let b1: u32 = (*bytes[i]).into() * 65536;
+        let b2: u32 = (*bytes[i + 1]).into() * 256;
+        let b3: u32 = (*bytes[i + 2]).into();
+        let n: u32 = b1 | b2 | b3;
+
+        // Extract the four 6-bit values using division and masking
         let e1 = (n / 262144) & 63;
         let e2 = (n / 4096) & 63;
         let e3 = (n / 64) & 63;
         let e4 = n & 63;
+
+        // Add the encoded characters
         result.append(*base64_chars[e1]);
         result.append(*base64_chars[e2]);
+
+        // Handle padding for the last group
         if i == last_iteration {
             if p == 2 {
                 result.append('=');
@@ -90,8 +101,10 @@ pub fn encode_u8_array(mut bytes: Array<u8>, base64_chars: Span<u8>) -> Array<u8
             result.append(*base64_chars[e3]);
             result.append(*base64_chars[e4]);
         }
+
         i += 3;
     }
+
     result
 }
 
@@ -99,39 +112,75 @@ pub fn encode_felt(self: felt252, base64_chars: Span<u8>) -> Array<u8> {
     let mut result = array![];
 
     let mut num: u256 = self.into();
-    if num != 0 {
-        let (quotient, remainder) = DivRem::div_rem(num, 65536_u256.try_into().unwrap());
-        // Safe since 'remainder' is always less than 65536 (2^16),
-        // which is within the range of usize (less than 2^32).
-        let remainder: usize = remainder.try_into().unwrap();
-        let r3 = (remainder / 1024) & 63;
-        let r2 = (remainder / 16) & 63;
-        let r1 = (remainder * 4) & 63;
-        result.append(*base64_chars[r1]);
-        result.append(*base64_chars[r2]);
-        result.append(*base64_chars[r3]);
-        num = quotient;
+    // Special case for zero
+    if num == 0 {
+        // Create a result with the minimum padding
+        result.append(*base64_chars[0]); // 'A'
+
+        // Pad to 43 characters
+        let pad_count = 42; // We already added one 'A', so add 42 more for a total of 43
+        let mut i = 0;
+        while i != pad_count {
+            result.append(*base64_chars[0]);
+            i += 1;
+        }
+
+        result.append('='); // Add padding
+        return result;
     }
-    while (num != 0) {
+
+    // Handle non-zero values
+    let (quotient, remainder) = DivRem::div_rem(num, 65536_u256.try_into().unwrap());
+    // Safe since 'remainder' is always less than 65536 (2^16),
+    // which is within the range of usize (less than 2^32).
+    let remainder: usize = remainder.try_into().unwrap();
+
+    // Optimize bit operations
+    let r1 = (remainder * 4) & 63;
+    let r2 = (remainder / 16) & 63;
+    let r3 = (remainder / 1024) & 63;
+
+    result.append(*base64_chars[r1]);
+    result.append(*base64_chars[r2]);
+    result.append(*base64_chars[r3]);
+
+    num = quotient;
+
+    while num != 0 {
         let (quotient, remainder) = DivRem::div_rem(num, 16777216_u256.try_into().unwrap());
         // Safe since 'remainder' is always less than 16777216 (2^24),
         // which is within the range of usize (less than 2^32).
         let remainder: usize = remainder.try_into().unwrap();
-        let r4 = remainder / 262144;
-        let r3 = (remainder / 4096) & 63;
-        let r2 = (remainder / 64) & 63;
+
+        // Optimize bit operations
         let r1 = remainder & 63;
+        let r2 = (remainder / 64) & 63;
+        let r3 = (remainder / 4096) & 63;
+        let r4 = remainder / 262144;
+
         result.append(*base64_chars[r1]);
         result.append(*base64_chars[r2]);
         result.append(*base64_chars[r3]);
         result.append(*base64_chars[r4]);
+
         num = quotient;
     }
-    while (result.len() < 43) {
-        result.append('A');
+
+    // Padding with 'A's to ensure length is 43
+    let required_length = 43;
+    let current_length = result.len();
+    if current_length < required_length {
+        let padding_len = required_length - current_length;
+        let mut i = 0;
+        while i != padding_len {
+            result.append(*base64_chars[0]); // 'A'
+            i += 1;
+        }
     }
+
     result = result.reversed();
     result.append('=');
+
     result
 }
 
@@ -142,76 +191,97 @@ pub impl Base64Decoder of Decoder<Array<u8>> {
 }
 
 pub impl Base64UrlDecoder of Decoder<Array<u8>> {
-    fn decode(mut data: Array<u8>) -> Array<u8> {
+    fn decode(data: Array<u8>) -> Array<u8> {
         inner_decode(data)
     }
 }
 
-
 fn inner_decode(data: Array<u8>) -> Array<u8> {
     let mut result = array![];
-    let mut p = 0_u8;
-    if data.len() > 0 {
-        if *data[data.len() - 1] == '=' {
-            p += 1;
-        }
-        if *data[data.len() - 2] == '=' {
-            p += 1;
-        }
-        decode_loop(p, data, 0, ref result);
+
+    // Early return for empty input
+    if data.len() == 0 {
+        return result;
     }
+
+    // Calculate padding
+    let mut p = 0_u8;
+    let data_len = data.len();
+
+    // Check for padding characters ('=')
+    if data_len > 0 && *data[data_len - 1] == '=' {
+        p += 1;
+
+        if data_len > 1 && *data[data_len - 2] == '=' {
+            p += 1;
+        }
+    }
+
+    // Process data in groups of 4 characters
+    let mut i = 0;
+    while i + 3 < data_len {
+        // Get values for the 4 characters
+        let v1: u32 = get_base64_value(*data[i]).into();
+        let v2: u32 = get_base64_value(*data[i + 1]).into();
+        let v3: u32 = get_base64_value(*data[i + 2]).into();
+        let v4: u32 = get_base64_value(*data[i + 3]).into();
+
+        // Combine the 4 6-bit values into a 24-bit number
+        let combined: u32 = (v1 * 262144) + (v2 * 4096) + (v3 * 64) + v4;
+
+        // Extract the 3 bytes
+        let b1: u8 = ((combined / 65536) & 0xFF).try_into().unwrap();
+        result.append(b1);
+
+        // Handle padding - don't add bytes if we're at the end with padding
+        if i + 4 >= data_len && p == 2 {
+            break;
+        }
+
+        let b2: u8 = ((combined / 256) & 0xFF).try_into().unwrap();
+        result.append(b2);
+
+        if i + 4 >= data_len && p == 1 {
+            break;
+        }
+
+        let b3: u8 = (combined & 0xFF).try_into().unwrap();
+        result.append(b3);
+
+        i += 4;
+    }
+
     result
 }
 
-fn decode_loop(p: u8, data: Array<u8>, d: usize, ref result: Array<u8>) {
-    if (d >= data.len()) {
-        return;
-    }
-    let x: u128 = BitShift::shl((get_base64_value(*data[d]).into()), 18)
-        | BitShift::shl((get_base64_value(*data[d + 1])).into(), 12)
-        | BitShift::shl((get_base64_value(*data[d + 2])).into(), 6)
-        | (get_base64_value(*data[d + 3])).into();
-
-    let mut i: u8 = (BitShift::shr(x, 16) & Bounded::<u8>::MAX.into()).try_into().unwrap();
-    result.append(i);
-    i = (BitShift::shr(x, 8) & Bounded::<u8>::MAX.into()).try_into().unwrap();
-    if d + 4 >= data.len() && p == 2 {
-        return;
-    }
-    result.append(i);
-
-    i = (x & Bounded::<u8>::MAX.into()).try_into().unwrap();
-    if d + 4 >= data.len() && p == 1 {
-        return;
-    }
-    result.append(i);
-    decode_loop(p, data, d + 4, ref result);
-}
-
 fn get_base64_value(x: u8) -> u8 {
-    if (x == '+') {
-        62
-    } else if (x == '-') {
-        62
-    } else if (x == '/') {
-        63
-    } else if (x <= '9') {
-        (x - '0') + 52
-    } else if (x == '=') {
-        0
-    } else if (x <= 'Z') {
-        (x - 'A') + 0
-    } else if (x == '_') {
-        63
-    } else if (x <= 'z') {
-        (x - 'a') + 26
-    } else {
-        0
+    // Fast lookup based on ASCII values
+    if x == '+' || x == '-' {
+        return 62;
     }
+
+    if x == '/' || x == '_' {
+        return 63;
+    }
+
+    if x >= 'A' && x <= 'Z' {
+        return x - 'A';
+    }
+
+    if x >= 'a' && x <= 'z' {
+        return (x - 'a') + 26;
+    }
+
+    if x >= '0' && x <= '9' {
+        return (x - '0') + 52;
+    }
+
+    // '=' padding character or any other character
+    return 0;
 }
 
 fn get_base64_char_set() -> Array<u8> {
-    let mut result = array![
+    array![
         'A',
         'B',
         'C',
@@ -274,6 +344,5 @@ fn get_base64_char_set() -> Array<u8> {
         '7',
         '8',
         '9',
-    ];
-    result
+    ]
 }
